@@ -1,0 +1,173 @@
+---
+title: "Final Assessment for Coursera's Practical Machine Learning course"
+author: "by Javier Leiva Cuadrado"
+output:
+  html_document: default
+  fontsize: 8pt
+  pdf_document:
+    fig_height: 5
+    fig_width: 5
+---
+
+```{r message=FALSE, results='hide', echo = FALSE, warning=FALSE}
+library(caret)
+library(randomForest)
+```
+
+
+# 1. Introduction
+
+This is the final project report from Coursera's course Practical Machine Learning, as part of the Data Science Specialization.
+
+### Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is to quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+In this project, our goal is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+
+More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+### Data
+
+The training data for this project are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har.
+
+### Goal
+
+The goal of the project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. We can use any of the other variables to predict with. We will also use our prediction model to predict 20 different test cases.
+
+# 2. Setting up the data
+
+### Downloading
+
+```{r}
+train_url <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+test_url <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+```
+
+### Reading
+
+```{r}
+train_set <- read.csv(url(train_url), na.strings=c("NA","#DIV/0!",""))
+test_set <- read.csv(url(test_url), na.strings=c("NA","#DIV/0!",""))
+
+dim(train_set)
+dim(test_set)
+```
+
+We can see that train_set has 19622 observations with 160 variables each one. test_set has the same number of variables but only 20 observations (that we will use to test our model).
+
+### Cleaning data
+
+Before separating the training set into two smaller sets for training the model, we are going to clean the data. Our aim is to delete the the variables with a high proportion of missing values as well as meaningless variables.
+
+```{r}
+missing_per <- colMeans(is.na(train_set))
+sum(missing_per>0.8)
+```
+
+
+There are 100 variables with at least 80% of missing values. These variables are not useful for developing a Machine Learning model.
+By plotting the values of missing_per we can see that there are two groups of variables: one with 0% missing values and another with more than 90% of missing values. It is clear that we will get only the first group of them.
+
+```{r}
+train_not_missing <- train_set[missing_per==0]
+dim(train_not_missing)
+```
+
+```{r}
+test_not_missing <- test_set[missing_per==0]
+dim(test_not_missing)
+```
+
+Now, we are going to drop those variables with not enough information to the accelerometer measurements.
+
+```{r}
+classe_copy <- train_not_missing$classe
+
+drop <- grepl("^X|timestamp|window", names(train_not_missing))
+train_not_missing <- train_not_missing[, !drop]
+train_clean <- train_not_missing[, sapply(train_not_missing, is.numeric)]
+
+train_clean$classe <- classe_copy
+
+drop <- grepl("^X|timestamp|window", names(test_not_missing))
+test_not_missing <- test_not_missing[, !drop]
+test_clean <- test_not_missing[, sapply(test_not_missing, is.numeric)]
+
+dim(train_clean)
+dim(test_clean)
+```
+
+### Partitioning
+
+We are going to separate the training data set into two groups: the first one for training our model and the second one for applying cross-validation.
+
+```{r}
+
+set.seed(333)
+
+random <- createDataPartition(train_clean$classe, p=0.70, list=F)
+train_subset <- train_clean[random, ]
+cv_subset <- train_clean[-random, ]
+```
+
+# 3. Modelling
+
+After testing different models (like Decesion Trees or Generalized Boosted Regression) and training different methods (bootstrapping and cross-validation), I have decided to choose Random Forest algorithm to generate a predictive model, with 2-fold cross-validation as training method.
+
+### Training
+
+```{r message=FALSE}
+# Freeing memory
+rm(train_set, test_set, test_not_missing, train_not_missing, train_clean)
+gc()
+
+# Training the method
+control <- trainControl(method = "cv", number = 2)
+model <- train(classe ~ ., data = train_subset, method = "rf", prox = TRUE, trControl = control)
+```
+
+### Evaluating
+
+Let's evaluate how our model predicts over the cross-validation dataset.
+
+```{r prediction}
+prediction <- predict(model, newdata = cv_subset)
+```
+
+Now, let's see the prediction accuracy with the confusion matrix.
+
+```{r accuracy}
+confusion <- confusionMatrix(prediction, reference = cv_subset$classe)
+
+plot(confusion$table, col = confusion$byClass, main = paste("Random Forest Confusion Matrix: Accuracy =", round(confusion$overall['Accuracy'], 4)))
+
+accuracy <- confusion$overall["Accuracy"]
+```
+
+The accuracy of the prediction is `r paste0(round(accuracy * 100, 2), "%")`, so the *out-of-sample error* is `r paste0(round(100 - accuracy * 100, 2), "%")`.
+
+
+### Model variability explanation
+
+The most significative variables in our model and their relative importance values are:
+
+```{r varImp}
+signif <- varImp(model)$importance
+signif[head(order(unlist(signif), decreasing = TRUE), 5L), , drop = FALSE]
+```
+
+# 4. Quiz prediction
+
+
+Now we are going to predict the 20 quiz results by applying the model that we have built.
+
+```{r finalpredict}
+final_prediction <- predict(model, newdata=test_clean)
+final_prediction
+```
+
